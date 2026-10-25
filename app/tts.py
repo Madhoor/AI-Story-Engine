@@ -1,30 +1,81 @@
-import torch
-import soundfile as sf
 import os
+import re
+from typing import Optional
+from app.config import VOICE, AUDIO_SAMPLE_RATE, AUDIO_DIR
 
-from kokoro import KPipeline, KModel
+_pipeline_instance = None
 
+def get_pipeline(lang_code: str = "a"):
+    """
+    Lazy-loads Kokoro TTS pipeline with CUDA/CPU auto-detection.
+    """
+    global _pipeline_instance
+    if _pipeline_instance is None:
+        try:
+            from kokoro import KPipeline
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+            print("[TTS Agent] Initializing Kokoro Neural TTS...")
+            _pipeline_instance = KPipeline(lang_code=lang_code)
+        except ImportError as e:
+            raise ImportError(
+                f"Kokoro TTS or PyTorch is not installed in the current Python environment: {e}\n"
+                "To enable local voice synthesis, ensure dependencies are installed via: pip install kokoro soundfile torch"
+            )
+    return _pipeline_instance
 
-model = KModel().to(device)
-pipeline = KPipeline(
-    lang_code="a",
-    model=model
-)
+def clean_speech_text(text: str) -> str:
+    """
+    Pre-processes narrative text for natural TTS output:
+    - Strips markdown asterisks, hashes, backticks
+    - Removes emojis and unpronounceable symbols
+    - Normalizes multiple spaces and punctuation
+    """
+    # Remove markdown formatting
+    cleaned = re.sub(r"[*_~`#]", "", text)
+    # Remove URL or brackets
+    cleaned = re.sub(r"\[.*?\]|\(.*?\)", "", cleaned)
+    # Remove emoji characters
+    cleaned = re.sub(r"[^\x00-\x7F]+", " ", cleaned)
+    # Normalize whitespace
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
-print(f"Kokoro running on: {device}")
+def generate_voice(
+    text: str,
+    output_path: Optional[str] = None,
+    voice: Optional[str] = None
+) -> str:
+    """
+    Synthesizes natural voice audio using Kokoro TTS and saves to 24kHz WAV file.
+    """
+    if output_path is None:
+        output_path = os.path.join(AUDIO_DIR, "output.wav")
 
-def generate_voice(text, output_path="data/audio/story.wav", voice="af_heart"):
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    active_voice = voice or VOICE
+    
+    cleaned_text = clean_speech_text(text)
+    print(f"[TTS Agent] Synthesizing {len(cleaned_text.split())} words using voice '{active_voice}'...")
 
-    audio_chunks = []
+    try:
+        import soundfile as sf
+        pipeline = get_pipeline(lang_code="a" if active_voice.startswith("a") else "b")
+        generator = pipeline(cleaned_text, voice=active_voice)
 
-    generator = pipeline(text, voice=voice)
+        audio_chunks = []
+        for _, _, audio in generator:
+            if hasattr(audio, "detach"):
+                audio = audio.detach().cpu().numpy()
+            audio_chunks.append(audio)
 
-    for _, _, audio in generator:
-        audio_chunks.extend(audio)
+        if not audio_chunks:
+            raise RuntimeError("TTS generation produced empty audio.")
 
-    sf.write(output_path, audio_chunks, 24000)
+        import numpy as np
+        sf.write(output_path, np.concatenate(audio_chunks), AUDIO_SAMPLE_RATE)
+        print(f"[TTS Agent] Audio successfully saved to: {output_path}")
+        return output_path
 
-    print(f"Voice saved to: {output_path}")
+    except Exception as e:
+        print(f"[TTS Agent] Synthesis error: {e}")
+        raise e

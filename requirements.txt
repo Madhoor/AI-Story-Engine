@@ -4,12 +4,8 @@ torchvision==0.27.1
 transformers==5.13.0
 huggingface_hub==1.23.0
 
-# NLP
-spacy>=3.8.16
-spacy-curated-transformers==0.3.1
-
 # TTS / Speech
-kokoro==0.9.4
+kokoro==0.9.4; python_version < "3.13"
 phonemizer-fork==3.3.2
 espeakng-loader==0.2.4
 
@@ -22,9 +18,15 @@ soundfile==0.14.0
 pillow==12.2.0
 
 # Scientific computing
-numpy==2.5.1
+numpy==2.2.6
 
 # Utilities
 requests==2.34.2
 tqdm==4.68.4
 rich==15.0.0
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+
+# Video compositing
+moviepy==1.0.3
+imageio-ffmpeg==0.6.0

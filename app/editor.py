@@ -1,16 +1,17 @@
 import json
-import requests
+from app.config import MODEL, EDITOR_PROMPT_PATH
+from app.llm import clean_json_response, call_ollama
 
-from app.config import MODEL, OLLAMA_URL
-
-
-def load_prompt():
-    with open("prompts/editor_prompt.txt", "r", encoding="utf-8") as file:
+def load_prompt() -> str:
+    with open(EDITOR_PROMPT_PATH, "r", encoding="utf-8") as file:
         return file.read()
 
-
-def rewrite_story(story, review):
-
+def rewrite_story(story: dict, review: dict, model: str = None) -> dict:
+    """
+    Applies surgical micro-edits to a story using the Critic's feedback.
+    Preserves unaffected sections, characters, and overall plot.
+    """
+    active_model = model or MODEL
     prompt = (
         load_prompt()
         + "\n\nStory Package:\n"
@@ -20,22 +21,31 @@ def rewrite_story(story, review):
     )
 
     payload = {
-        "model": MODEL,
+        "model": active_model,
         "prompt": prompt,
-        "stream": False,
-        "format": "json"
+        "format": "json",
+        "options": {
+            "temperature": 0.6,
+            "top_p": 0.9,
+            "num_ctx": 4096
+        }
     }
 
-    response = requests.post(
-        OLLAMA_URL,
-        json=payload
-    )
-
+    try:
+        response_text = call_ollama(payload)
+    except Exception as e:
+        print(f"[Story Rewriter] Request error: {e}")
+        return story
     
-    response_text = response.json()["response"]
+    try:
+        revised_story = clean_json_response(response_text)
+    except json.JSONDecodeError:
+        print("[Story Rewriter] Failed to parse rewriter response. Retaining original story.")
+        return story
 
-    print("\n===== RAW EDITOR RESPONSE =====\n")
-    print(response_text)
-    print("\n===============================\n")
+    # Fallback merge: ensure required fields are not dropped
+    for key in ["title", "hook", "story", "thumbnail_prompt", "scene_prompts"]:
+        if key not in revised_story or not revised_story[key]:
+            revised_story[key] = story.get(key, "")
 
-    return json.loads(response_text)
+    return revised_story
